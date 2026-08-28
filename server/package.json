@@ -1,0 +1,24 @@
+{
+  "name": "notestudio-server",
+  "version": "1.0.0",
+  "description": "NoteStudio backend API — semester-wise PDF notes library",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.19.2",
+    "mammoth": "^1.11.0",
+    "multer": "^2.0.0",
+    "word-extractor": "^0.1.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
