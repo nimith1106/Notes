@@ -1,5 +1,7 @@
 const bcrypt = require('bcryptjs');
-const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
+const ADMIN_PASSWORD_HASH = (process.env.ADMIN_PASSWORD_HASH || '')
+  .trim()
+  .replace(/^['"]|['"]$/g, '');
 
 function isAdminRequest(req) {
   const password = req.get('x-admin-password');
