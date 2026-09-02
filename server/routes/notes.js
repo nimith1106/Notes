@@ -3,9 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const AdmZip = require('adm-zip');
-const { load, save } = require('../store');
 const mammoth = require('mammoth');
 const WordExtractor = require('word-extractor');
+const Note = require('../models/Note');
 const { upload, UPLOAD_DIR } = require('../middleware/upload');
 const { requireAdmin } = require('../middleware/admin');
 const { slugify } = require('../utils/slug');
@@ -52,13 +52,6 @@ function pptxPreview(filePath, title) {
   return previewPage(title, slides.join('') || '<p>No readable slides found.</p>');
 }
 
-// In-memory cache of all notes, kept in sync with the JSON file on disk.
-let notes = load();
-
-function persist() {
-  save(notes);
-}
-
 function toApi(n) {
   return {
     id: n.id,
@@ -79,7 +72,6 @@ function cleanupFiles(files) {
   (files || []).forEach(f => fs.unlink(f.path, () => {}));
 }
 
-// Removes a folder if it's now empty (e.g. after moving/deleting its last file).
 function cleanupEmptyDir(absDir) {
   fs.readdir(absDir, (err, items) => {
     if (err) return;
@@ -87,12 +79,10 @@ function cleanupEmptyDir(absDir) {
   });
 }
 
-// Moves an existing note's file into the folder matching its current subject,
-// used when a subject name/code is edited so files stay grouped correctly.
 function relocateFileIfNeeded(note) {
   const subjectKey = (note.subjectCode && note.subjectCode.trim()) || note.subjectName || 'uncategorized';
   const targetFolder = slugify(subjectKey);
-  const currentFolder = path.dirname(note.filePath); // relative, e.g. "maths"
+  const currentFolder = path.dirname(note.filePath);
 
   if (currentFolder === targetFolder) return;
 
@@ -113,44 +103,41 @@ function relocateFileIfNeeded(note) {
   }
 }
 
-// GET /api/notes — list all notes, or filter with query params
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { sem, type, favorite, q } = req.query;
-  let result = notes.slice();
+  const query = {};
 
-  if (sem) result = result.filter(n => n.sem === sem);
-  if (type && VALID_TYPES.includes(type)) result = result.filter(n => n.type === type);
-  if (favorite === 'true') result = result.filter(n => n.favorite);
+  if (sem) query.sem = sem;
+  if (type && VALID_TYPES.includes(type)) query.type = type;
+  if (favorite === 'true') query.favorite = true;
   if (q) {
-    const ql = q.toLowerCase();
-    result = result.filter(n =>
-      n.subjectName.toLowerCase().includes(ql) ||
-      (n.subjectCode || '').toLowerCase().includes(ql) ||
-      n.title.toLowerCase().includes(ql)
-    );
+    const ql = q.toString();
+    query.$or = [
+      { subjectName: { $regex: ql, $options: 'i' } },
+      { subjectCode: { $regex: ql, $options: 'i' } },
+      { title: { $regex: ql, $options: 'i' } }
+    ];
   }
 
-  result.sort((a, b) => b.addedAt - a.addedAt);
-  res.json(result.map(toApi));
+  const notes = await Note.find(query).sort({ addedAt: -1 });
+  res.json(notes.map(toApi));
 });
 
-// GET /api/notes/stats — total note count and total storage used
-router.get('/stats', (req, res) => {
-  const count = notes.length;
-  const totalSize = notes.reduce((sum, n) => sum + (n.size || 0), 0);
+router.get('/stats', async (req, res) => {
+  const count = await Note.countDocuments();
+  const docs = await Note.find({}, { size: 1, _id: 0 });
+  const totalSize = docs.reduce((sum, n) => sum + (n.size || 0), 0);
   res.json({ count, totalSize });
 });
 
-// POST /api/notes — upload one or more documents (bulk supported via "files" field)
-// Multer's destination callback (see middleware/upload.js) already places
-// each file inside uploads/<subject-slug>/ based on the submitted subject.
-router.post('/', upload.array('files', 20), (req, res) => {
+router.post('/', upload.array('files', 20), async (req, res) => {
   const { sem, subjectName, subjectCode, type, title } = req.body;
 
   if (!sem || !subjectName) {
     cleanupFiles(req.files);
     return res.status(400).json({ error: 'sem and subjectName are required' });
   }
+
   const noteType = VALID_TYPES.includes(type) ? type : 'Notes';
   const files = req.files || [];
   if (!files.length) {
@@ -160,35 +147,33 @@ router.post('/', upload.array('files', 20), (req, res) => {
   const created = [];
   const now = Date.now();
 
-  files.forEach((file, idx) => {
+  for (const [idx, file] of files.entries()) {
     const id = crypto.randomUUID();
     const noteTitle = files.length === 1 && title ? title : file.originalname.replace(/\.(pdf|docx?)$/i, '');
-    const record = {
+    const record = new Note({
       id,
       sem,
       subjectName,
       subjectCode: subjectCode || '',
       type: noteType,
       title: noteTitle,
-      filePath: path.relative(UPLOAD_DIR, file.path), // e.g. "maths/<uuid>.pdf"
+      filePath: path.relative(UPLOAD_DIR, file.path),
       originalName: file.originalname,
       size: file.size,
-      addedAt: now + idx, // keep stable, distinct ordering for bulk uploads
+      addedAt: now + idx,
       favorite: false,
       viewedAt: null
-    };
-    notes.push(record);
-    created.push(toApi(record));
-  });
+    });
 
-  persist();
+    await record.save();
+    created.push(toApi(record.toObject()));
+  }
+
   res.status(201).json(created);
 });
 
-// PUT /api/notes/:id — update metadata, optionally replace the file.
-// If the subject changes, the file is moved into the matching subject folder.
-router.put('/:id', requireAdmin, upload.single('file'), (req, res) => {
-  const existing = notes.find(n => n.id === req.params.id);
+router.put('/:id', requireAdmin, upload.single('file'), async (req, res) => {
+  const existing = await Note.findOne({ id: req.params.id });
   if (!existing) {
     if (req.file) fs.unlink(req.file.path, () => {});
     return res.status(404).json({ error: 'Note not found' });
@@ -199,8 +184,6 @@ router.put('/:id', requireAdmin, upload.single('file'), (req, res) => {
   const oldFolder = path.dirname(existing.filePath);
 
   if (req.file) {
-    // New file was already saved by multer into the folder matching the
-    // *new* subject (since subject fields are sent before the file field).
     const oldAbsPath = path.join(UPLOAD_DIR, existing.filePath);
     fs.unlink(oldAbsPath, () => cleanupEmptyDir(path.join(UPLOAD_DIR, oldFolder)));
     existing.filePath = path.relative(UPLOAD_DIR, req.file.path);
@@ -213,39 +196,34 @@ router.put('/:id', requireAdmin, upload.single('file'), (req, res) => {
   existing.type = noteType;
   existing.title = title || existing.title;
 
-  // No new file was uploaded, but the subject may have changed — move the
-  // existing file into the correct folder so it stays grouped correctly.
   if (!req.file) {
     relocateFileIfNeeded(existing);
   }
 
-  persist();
-  res.json(toApi(existing));
+  await existing.save();
+  res.json(toApi(existing.toObject()));
 });
 
-// POST /api/notes/:id/favorite — toggle favorite
-router.post('/:id/favorite', (req, res) => {
-  const note = notes.find(n => n.id === req.params.id);
+router.post('/:id/favorite', async (req, res) => {
+  const note = await Note.findOne({ id: req.params.id });
   if (!note) return res.status(404).json({ error: 'Note not found' });
 
   note.favorite = !note.favorite;
-  persist();
-  res.json(toApi(note));
+  await note.save();
+  res.json(toApi(note.toObject()));
 });
 
-// POST /api/notes/:id/view — mark as viewed (for "recently viewed")
-router.post('/:id/view', (req, res) => {
-  const note = notes.find(n => n.id === req.params.id);
+router.post('/:id/view', async (req, res) => {
+  const note = await Note.findOne({ id: req.params.id });
   if (!note) return res.status(404).json({ error: 'Note not found' });
 
   note.viewedAt = Date.now();
-  persist();
-  res.json(toApi(note));
+  await note.save();
+  res.json(toApi(note.toObject()));
 });
 
-// GET /api/notes/:id/preview — render office documents as same-origin HTML
 router.get('/:id/preview', async (req, res) => {
-  const note = notes.find(n => n.id === req.params.id);
+  const note = await Note.findOne({ id: req.params.id });
   if (!note) return res.status(404).send('Note not found');
 
   const filePath = path.join(UPLOAD_DIR, note.filePath);
@@ -275,9 +253,8 @@ router.get('/:id/preview', async (req, res) => {
   }
 });
 
-// GET /api/notes/:id/file — stream the document inline (for the in-page viewer)
-router.get('/:id/file', (req, res) => {
-  const note = notes.find(n => n.id === req.params.id);
+router.get('/:id/file', async (req, res) => {
+  const note = await Note.findOne({ id: req.params.id });
   if (!note) return res.status(404).json({ error: 'Note not found' });
 
   const filePath = path.join(UPLOAD_DIR, note.filePath);
@@ -288,9 +265,8 @@ router.get('/:id/file', (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
-// GET /api/notes/:id/download — force download
-router.get('/:id/download', (req, res) => {
-  const note = notes.find(n => n.id === req.params.id);
+router.get('/:id/download', async (req, res) => {
+  const note = await Note.findOne({ id: req.params.id });
   if (!note) return res.status(404).json({ error: 'Note not found' });
 
   const filePath = path.join(UPLOAD_DIR, note.filePath);
@@ -300,15 +276,11 @@ router.get('/:id/download', (req, res) => {
   res.download(filePath, note.title.replace(/[^a-z0-9\-_ ]/gi, '').trim() + extension);
 });
 
-// DELETE /api/notes/:id
-router.delete('/:id', requireAdmin, (req, res) => {
-  const idx = notes.findIndex(n => n.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Note not found' });
+router.delete('/:id', requireAdmin, async (req, res) => {
+  const note = await Note.findOneAndDelete({ id: req.params.id });
+  if (!note) return res.status(404).json({ error: 'Note not found' });
 
-  const [removed] = notes.splice(idx, 1);
-  persist();
-
-  const filePath = path.join(UPLOAD_DIR, removed.filePath);
+  const filePath = path.join(UPLOAD_DIR, note.filePath);
   const folder = path.dirname(filePath);
   fs.unlink(filePath, () => cleanupEmptyDir(folder));
 

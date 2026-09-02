@@ -18,6 +18,21 @@
   const themeToggle = document.getElementById('themeToggle');
   const themeIcon = document.getElementById('themeIcon');
   const adminBtn = document.getElementById('adminBtn');
+  const heroUploadBtn = document.getElementById('heroUploadBtn');
+  const heroBrowseBtn = document.getElementById('heroBrowseBtn');
+  const heroNotesCount = document.getElementById('heroNotesCount');
+  const heroFavCount = document.getElementById('heroFavCount');
+
+  const dialogOverlay = document.getElementById('dialogOverlay');
+  const dialogModal = document.getElementById('dialogModal');
+  const dialogTitle = document.getElementById('dialogTitle');
+  const dialogMessage = document.getElementById('dialogMessage');
+  const dialogInputWrap = document.getElementById('dialogInputWrap');
+  const dialogPasswordInput = document.getElementById('dialogPasswordInput');
+  const dialogErrorText = document.getElementById('dialogErrorText');
+  const dialogCancelBtn = document.getElementById('dialogCancelBtn');
+  const dialogConfirmBtn = document.getElementById('dialogConfirmBtn');
+  const toastContainer = document.getElementById('toastContainer');
 
   const openUploadBtn = document.getElementById('openUploadBtn');
   const modalOverlay = document.getElementById('modalOverlay');
@@ -100,6 +115,112 @@
   });
   applyTheme(localStorage.getItem('notestudio-theme') || 'light');
 
+  let dialogResolver = null;
+  function closeDialog(){
+    dialogOverlay.classList.remove('open');
+    dialogOverlay.setAttribute('aria-hidden', 'true');
+    dialogInputWrap.style.display = 'none';
+    dialogPasswordInput.value = '';
+    dialogErrorText.textContent = '';
+    dialogErrorText.classList.remove('show');
+    dialogModal.classList.remove('danger');
+    dialogConfirmBtn.classList.remove('danger');
+    dialogConfirmBtn.dataset.mode = 'confirm';
+  }
+
+  function openDialog({ title, message, confirmText = 'Confirm', cancelText = 'Cancel', isDanger = false, showInput = false } = {}){
+    dialogTitle.textContent = title;
+    dialogMessage.textContent = message;
+    dialogConfirmBtn.textContent = confirmText;
+    dialogCancelBtn.textContent = cancelText;
+    dialogModal.classList.toggle('danger', isDanger);
+    dialogConfirmBtn.classList.toggle('danger', isDanger);
+    dialogInputWrap.style.display = showInput ? 'block' : 'none';
+    dialogPasswordInput.value = '';
+    dialogErrorText.textContent = '';
+    dialogErrorText.classList.remove('show');
+    dialogOverlay.classList.add('open');
+    dialogOverlay.setAttribute('aria-hidden', 'false');
+    dialogConfirmBtn.dataset.mode = showInput ? 'input' : 'confirm';
+    if(showInput){ dialogPasswordInput.focus(); }
+  }
+
+  function showConfirmDialog({ title, message, confirmText = 'Confirm', cancelText = 'Cancel', isDanger = false } = {}){
+    return new Promise(resolve => {
+      dialogResolver = resolve;
+      openDialog({ title, message, confirmText, cancelText, isDanger });
+    });
+  }
+
+  function showPasswordDialog({ title = 'Owner access', message = 'Enter the owner password to continue.' } = {}){
+    return new Promise(resolve => {
+      dialogResolver = resolve;
+      openDialog({ title, message, confirmText: 'Continue', cancelText: 'Cancel', showInput: true });
+    });
+  }
+
+  function showInfoDialog({ title, message, confirmText = 'OK' } = {}){
+    return new Promise(resolve => {
+      dialogResolver = resolve;
+      openDialog({ title, message, confirmText, cancelText: 'Close' });
+    });
+  }
+
+  function showToast({ type = 'success', message = 'Saved', duration = 2600 } = {}) {
+    if(!toastContainer) return;
+
+    const toast = document.createElement('div');
+    toast.className = 'toast ' + type;
+    toast.innerHTML = '<div class="toast-icon">' + (type === 'error' ? '!' : '✓') + '</div>' +
+      '<div class="toast-text">' + escapeHtml(message) + '</div>';
+    toastContainer.appendChild(toast);
+
+    requestAnimationFrame(() => {
+      toast.classList.add('show');
+    });
+
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), 220);
+    }, duration);
+  }
+
+  function setLoadingState(button, isLoading, label) {
+    if(!button) return;
+    button.disabled = isLoading;
+    button.classList.toggle('is-loading', isLoading);
+    button.textContent = isLoading ? label : button.dataset.defaultLabel || label;
+  }
+
+  dialogCancelBtn.addEventListener('click', ()=>{
+    closeDialog();
+    if(dialogResolver){ dialogResolver(null); dialogResolver = null; }
+  });
+
+  dialogConfirmBtn.addEventListener('click', ()=>{
+    if(dialogConfirmBtn.dataset.mode === 'input'){
+      const value = dialogPasswordInput.value.trim();
+      if(!value){
+        dialogErrorText.textContent = 'Please enter the owner password.';
+        dialogErrorText.classList.add('show');
+        dialogPasswordInput.focus();
+        return;
+      }
+      closeDialog();
+      if(dialogResolver){ dialogResolver(value); dialogResolver = null; }
+      return;
+    }
+
+    closeDialog();
+    if(dialogResolver){ dialogResolver(true); dialogResolver = null; }
+  });
+
+  dialogOverlay.addEventListener('click', (event)=>{
+    if(event.target !== dialogOverlay) return;
+    closeDialog();
+    if(dialogResolver){ dialogResolver(null); dialogResolver = null; }
+  });
+
   // ---------- API helpers ----------
   async function fetchNotes(){
     const res = await fetch(API);
@@ -136,15 +257,25 @@
       renderGrid();
       return;
     }
-    const password = prompt('Enter the owner password:');
+
+    const password = await showPasswordDialog({
+      title: 'Owner access',
+      message: 'Enter the owner password to unlock admin controls.'
+    });
+
     if(!password) return;
     adminPassword = password;
     await checkAdmin();
     if(!isAdmin){
       adminPassword = '';
-      alert('Owner login failed.');
+      await showInfoDialog({
+        title: 'Owner access failed',
+        message: 'The password you entered is incorrect. Please try again.'
+      });
+      showToast({ type:'error', message:'Owner access denied' });
     }else{
       sessionStorage.setItem('notestudio-admin-password', adminPassword);
+      showToast({ type:'success', message:'Owner access granted' });
     }
   });
 
@@ -153,6 +284,9 @@
     const count = allNotes.length;
     const totalBytes = allNotes.reduce((sum,n)=> sum + (n.size||0), 0);
     brandStats.textContent = count + (count===1 ? ' note' : ' notes') + (count ? ' · ' + fmtTotalSize(totalBytes) : '');
+
+    if(heroNotesCount) heroNotesCount.textContent = String(count);
+    if(heroFavCount) heroFavCount.textContent = String(allNotes.filter(note => note.favorite).length);
   }
 
   // ---------- recently viewed ----------
@@ -391,10 +525,28 @@
   }
 
   async function deleteNote(id){
-    if(!confirm('Delete this note? This cannot be undone.')) return;
-    await deleteNoteApi(id);
-    allNotes = allNotes.filter(n => n.id !== id);
-    renderGrid();
+    const confirmed = await showConfirmDialog({
+      title: 'Delete this note?',
+      message: 'This note will be permanently removed from your library.',
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      isDanger: true
+    });
+
+    if(!confirmed) return;
+
+    try{
+      await deleteNoteApi(id);
+      allNotes = allNotes.filter(n => n.id !== id);
+      renderGrid();
+      showToast({ type:'success', message:'Note deleted' });
+    }catch (error) {
+      await showInfoDialog({
+        title: 'Delete failed',
+        message: 'The note could not be deleted right now. Please try again.'
+      });
+      showToast({ type:'error', message:'Delete failed' });
+    }
   }
 
   // ---------- upload modal (bulk supported) ----------
@@ -464,6 +616,12 @@
     if(e.dataTransfer.files && e.dataTransfer.files.length) handleFiles(Array.from(e.dataTransfer.files));
   });
 
+  heroUploadBtn.addEventListener('click', openUploadModal);
+  heroBrowseBtn.addEventListener('click', ()=> {
+    document.querySelector('main')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    searchInput.focus();
+  });
+
   openUploadBtn.addEventListener('click', openUploadModal);
   cancelUpload.addEventListener('click', closeUploadModal);
   modalOverlay.addEventListener('click', (e)=>{ if(e.target === modalOverlay) closeUploadModal(); });
@@ -485,7 +643,9 @@
     }
 
     submitUpload.disabled = true;
+    submitUpload.dataset.defaultLabel = 'Add note';
     submitUpload.textContent = 'Uploading…';
+    submitUpload.classList.add('is-loading');
 
     try{
       const formData = new FormData();
@@ -507,11 +667,14 @@
       closeUploadModal();
       renderTabs();
       renderGrid();
+      showToast({ type:'success', message:'Document uploaded' });
     }catch(e){
       fileError.textContent = e.message || 'Upload failed.';
       fileError.classList.add('show');
+      showToast({ type:'error', message: e.message || 'Upload failed' });
     }finally{
       submitUpload.disabled = false;
+      submitUpload.classList.remove('is-loading');
       submitUpload.textContent = 'Add note';
     }
   });
@@ -560,7 +723,9 @@
     if(!title){ editNoteTitle.focus(); return; }
 
     submitEdit.disabled = true;
+    submitEdit.dataset.defaultLabel = 'Save changes';
     submitEdit.textContent = 'Saving…';
+    submitEdit.classList.add('is-loading');
     try{
       const formData = new FormData();
       formData.append('subjectName', subjectName);
@@ -584,11 +749,14 @@
       closeEditModal();
       renderTabs();
       renderGrid();
+      showToast({ type:'success', message:'Changes saved' });
     }catch(e){
       editFileError.textContent = e.message || 'Could not save changes.';
       editFileError.classList.add('show');
+      showToast({ type:'error', message: e.message || 'Could not save changes' });
     }finally{
       submitEdit.disabled = false;
+      submitEdit.classList.remove('is-loading');
       submitEdit.textContent = 'Save changes';
     }
   });

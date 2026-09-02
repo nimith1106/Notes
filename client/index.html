@@ -36,8 +36,33 @@
 </header>
 
 <div class="hero">
-  
-  
+  <div class="hero-panel">
+    <div class="hero-copy">
+      <span class="eyebrow">Student resources hub</span>
+      <div class="hero-actions">
+        <button class="btn-primary" id="heroUploadBtn" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>
+          Upload document
+        </button>
+        <button class="btn-ghost" id="heroBrowseBtn" type="button">Browse library</button>
+      </div>
+    </div>
+
+    <div class="hero-stats" aria-label="Library overview">
+      <div class="stat-card">
+        <span class="stat-value" id="heroNotesCount">0</span>
+        <span class="stat-label">Files</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value">8</span>
+        <span class="stat-label">Semesters</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="heroFavCount">0</span>
+        <span class="stat-label">Favorites</span>
+      </div>
+    </div>
+  </div>
 
   <div class="recent-strip" id="recentStrip" style="display:none;">
     <h3>Recently viewed</h3>
@@ -95,7 +120,7 @@
       <div class="file-drop" id="fileDrop">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
         <p id="fileDropText">Click to choose document file(s), or drag them here</p>
-        <input type="file" id="fileInput" accept="application/pdf,.pdf,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/vnd.ms-powerpoint,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx" multiple>
+        <input type="file" id="fileInput" accept=".pdf,.doc,.docx,.ppt,.pptx" multiple>
       </div>
       <div class="field-hint" id="bulkHint" style="display:none;">Multiple files selected — each file's name will be used as its note title.</div>
       <div class="field-error" id="fileError"></div>
@@ -140,7 +165,7 @@
       <div class="file-drop" id="editFileDrop">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
         <p id="editFileDropText">Click to replace the document, or leave as-is</p>
-        <input type="file" id="editFileInput" accept="application/pdf,.pdf,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/vnd.ms-powerpoint,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx">
+        <input type="file" id="editFileInput" accept=".pdf,.doc,.docx,.ppt,.pptx">
       </div>
       <div class="field-error" id="editFileError"></div>
     </div>
@@ -185,6 +210,29 @@
 <footer class="site-footer">
   <button class="owner-access" id="adminBtn">Owner access</button>
 </footer>
+
+<div class="dialog-overlay" id="dialogOverlay" aria-hidden="true">
+  <div class="dialog-modal" id="dialogModal" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
+    <div class="dialog-header">
+      <div class="dialog-icon" id="dialogIcon">!</div>
+      <div class="dialog-title-wrap">
+        <h3 id="dialogTitle">Confirmation</h3>
+      </div>
+    </div>
+    <p class="dialog-message" id="dialogMessage">Are you sure?</p>
+    <div class="dialog-input-wrap" id="dialogInputWrap" style="display:none;">
+      <label for="dialogPasswordInput" class="sr-only">Owner password</label>
+      <input type="password" id="dialogPasswordInput" placeholder="Enter owner password" autocomplete="current-password">
+      <div class="dialog-error" id="dialogErrorText"></div>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn-ghost" id="dialogCancelBtn" type="button">Cancel</button>
+      <button class="btn-primary" id="dialogConfirmBtn" type="button">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
 <script type="module" src="app.js"></script>
 </body>
